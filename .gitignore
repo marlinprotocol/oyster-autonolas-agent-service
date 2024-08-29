@@ -1,1 +1,3 @@
 result*
+venv*
+agent-nix-build*
