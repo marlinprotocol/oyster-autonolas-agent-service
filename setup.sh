@@ -20,19 +20,46 @@ iptables -L -t nat
 /app/keygen-ed25519 --secret /app/id.sec --public /app/id.pub
 
 # olas agent service setup
-# Install pip
-python -m ensurepip --upgrade
-pip install --upgrade pip
+# Start DNS proxy
+/app/dnsproxy -u https://1.1.1.1/dns-query -v &
+DNS_PID=$!
 
-# Install open-autonomy
-pip install open-autonomy[all]
-pip install open-aea-ledger-ethereum
-autonomy init --remote --ipfs --author anon_kun
-autonomy packages init
-autonomy fetch valory/hello_world:0.1.0:bafybeifvk5uvlnmugnefhdxp26p6q2krc5i5ga6hlwgg6xyyn5b6hknmru --service
+# Start transparent proxy
+/app/ip-to-vsock-transparent --vsock-addr 3:1200 --ip-addr 127.0.0.1:1200 &
+PROXY_PID=$!
 
-cd /app/hello_world
-autonomy build-image
+# Wait for DNS and proxy to be ready
+sleep 5
+
+export HOME=/app
+export POETRY_HOME=/app/.poetry
+export PATH=$POETRY_HOME/bin:$PATH
+
+# todo - check if autonomy pre-requisites are installed
+cd /app
+poetry config virtualenvs.in-project true
+poetry new olas-agent
+cd olas-agent
+
+# Add dependencies
+poetry add open-autonomy[all] open-aea-ledger-ethereum
+
+# Initialize autonomy
+poetry run autonomy init --remote --ipfs --author anon_kun
+poetry run autonomy packages init
+poetry run autonomy fetch valory/hello_world:0.1.0:bafybeifvk5uvlnmugnefhdxp26p6q2krc5i5ga6hlwgg6xyyn5b6hknmru --service
+
+cd /app/olas-agent/hello_world
+
+# Start Docker daemon
+dockerd --host=unix:///var/run/docker.sock --host=tcp://0.0.0.0:2375 &
+DOCKER_PID=$!
+
+# Wait for Docker to be ready
+sleep 10
+
+# Build the image
+poetry run autonomy build-image
 
 cat > keys.json << EOF
 [
@@ -46,9 +73,12 @@ export ALL_PARTICIPANTS='[
     "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955"
 ]'
 
-autonomy deploy build keys.json -ltm
+poetry run autonomy deploy build keys.json -ltm
 
-cd /app/hello_world/abci_build
+# Stop Docker, DNS proxy and transparent proxy
+kill $DOCKER_PID
+kill $DNS_PID
+kill $PROXY_PID
 
 # starting supervisord
 cat /etc/supervisord.conf

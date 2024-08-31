@@ -94,11 +94,14 @@
             pkgs.nettools
             pkgs.iproute2
             pkgs.iptables-legacy
-            pkgs.docker
             pkgs.cacert
+            pkgs.git
+            pkgs.docker
             pkgs.docker-compose
             pkgs.docker-buildx
             pkgs.python310
+            pkgs.poetry
+            pkgs.gcc
           ];
           pathsToLink = [ "/bin" "/app" "/etc" ];
         };
