@@ -101,7 +101,7 @@
             pkgs.docker-buildx
             pkgs.python310
             pkgs.poetry
-            pkgs.gcc
+            # pkgs.gcc
           ];
           pathsToLink = [ "/bin" "/app" "/etc" ];
         };
