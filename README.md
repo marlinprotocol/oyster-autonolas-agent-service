@@ -1,6 +1,6 @@
 # Autonolas Agent Service on Oyster
 
-This repository packages [autonolas agent service](https://docs.autonolas.network/open-autonomy/) in an enclave image.
+This repository is a WIP to package [autonolas agent service](https://docs.autonolas.network/open-autonomy/) in an enclave image.
 
 The agent service used here is a simple hello world demo - https://docs.autonolas.network/demos/hello-world/
 
