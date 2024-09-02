@@ -4,6 +4,8 @@ set -e
 
 # setting an address for loopback
 ifconfig lo 127.0.0.1
+
+# ifconfig lo 127.0.0.1 up
 ip addr
 
 echo "127.0.0.1 localhost" > /etc/hosts
@@ -13,8 +15,14 @@ ip route add default dev lo src 127.0.0.1
 ip route
 
 # iptables rules to route traffic to transparent proxy
-iptables -A OUTPUT -t nat -p tcp --dport 1:65535 ! -d 127.0.0.1  -j DNAT --to-destination 127.0.0.1:1200
+iptables -A OUTPUT -t nat -p tcp --dport 1:65535 ! -d 127.0.0.1 -j DNAT --to-destination 127.0.0.1:1200
 iptables -L -t nat
+
+# iptables -t nat -A OUTPUT -p tcp -d 13.42.161.185 --dport 443 -j ACCEPT
+# iptables -t nat -A OUTPUT -p tcp -d 13.41.115.114 --dport 443 -j ACCEPT
+# iptables -t nat -A OUTPUT -p tcp -d 52.56.57.111 --dport 443 -j ACCEPT
+# iptables -A OUTPUT -t nat -p tcp --dport 1:65535 ! -d 127.0.0.1 -j DNAT --to-destination 127.0.0.1:1200
+# iptables -L -t nat
 
 # generate identity key
 /app/keygen-ed25519 --secret /app/id.sec --public /app/id.pub
@@ -29,7 +37,32 @@ DNS_PID=$!
 PROXY_PID=$!
 
 # Wait for DNS and proxy to be ready
-sleep 5
+sleep 10
+
+# # Debug: Check DNS resolution
+# echo "Checking DNS resolution before setting resolv.conf"
+# nslookup google.com || { echo "DNS resolution failed before setting resolv.conf"; exit 1; }
+
+# # Additional Debugging: Check DNS resolution for registry.autonolas.tech
+# echo "Checking DNS resolution for registry.autonolas.tech"
+# nslookup registry.autonolas.tech || { echo "DNS resolution failed for registry.autonolas.tech"; exit 1; }
+
+# # Additional Debugging: Check IP routes
+# echo "Checking IP routes"
+# ip route show
+
+# # Additional Debugging: Check IP rules
+# echo "Checking IP rules"
+# ip rule show
+
+# # Additional Debugging: Check if we can establish a TCP connection to registry.autonolas.tech
+# echo "Checking TCP connection to registry.autonolas.tech"
+# nc -zv registry.autonolas.tech 443 || { echo "TCP connection to registry.autonolas.tech failed"; exit 1; }
+
+
+# # Additional Debugging: Check connectivity to registry.autonolas.tech
+# echo "Checking connectivity to registry.autonolas.tech"
+# ping -c 4 registry.autonolas.tech || { echo "Ping to registry.autonolas.tech failed"; exit 1; }
 
 export HOME=/app
 export POETRY_HOME=/app/.poetry
@@ -51,12 +84,26 @@ poetry run autonomy fetch valory/hello_world:0.1.0:bafybeifvk5uvlnmugnefhdxp26p6
 
 cd /app/olas-agent/hello_world
 
-# Start Docker daemon
-dockerd --host=unix:///var/run/docker.sock --host=tcp://0.0.0.0:2375 &
+# Start Docker daemon with legacy iptables
+/bin/dockerd --iptables=false &
 DOCKER_PID=$!
 
 # Wait for Docker to be ready
-sleep 10
+sleep 30
+
+# Check if Docker socket exists
+if [ ! -S /var/run/docker.sock ]; then
+    echo "Docker socket not found. Exiting."
+    exit 1
+fi
+
+# Check if Docker is running
+if docker info > /dev/null 2>&1; then
+    echo "Docker is running, proceeding with the build."
+else
+    echo "Docker is not running. Exiting."
+    exit 1
+fi
 
 # Build the image
 poetry run autonomy build-image
