@@ -11,11 +11,6 @@
     nitro = nitro-util.lib.${system};
     eifArch = "x86_64";
     pkgs = (import nixpkgs { system = "${system}"; config.allowUnfree = true; }).extend poetry2nix.overlays.default;
-    python310 = pkgs.python310;
-    poetryEnv = pkgs.poetry2nix.mkPoetryEnv {
-      python = python310;
-      projectDir = ./.;
-    };
     supervisord = pkgs.fetchurl {
       url = "https://artifacts.marlin.org/oyster/binaries/supervisord_c2cae38b_linux_amd64";
       sha256 = "46bf15be56a4cac3787f3118d5b657187ee3e4d0a36f3aa2970f3ad3bd9f2712";
@@ -79,6 +74,12 @@
       cp ${init} $out
       chmod +x $out
       '';
+      # _very_ hacky, my nix-fu is definitely not great, figure out a better way
+			iptablesPath = pkgs.runCommand "iptablesPath" {} ''
+			mkdir -p $out/app
+			echo "${(pkgs.lib.lists.findFirst (x: pkgs.lib.strings.hasInfix "iptable" x) "/nowhere" (pkgs.lib.strings.splitString ":" pkgs.docker.moby.extraPath))}/" > $out/app/iptablesPath.txt
+			cat $out/app/iptablesPath.txt
+			'';
       packages.${system}.default = nitro.buildEif {
         name = "enclave";
         arch = eifArch;
@@ -96,6 +97,7 @@
           paths = [
             self.app
             pkgs.busybox
+            self.iptablesPath
             pkgs.nettools
             pkgs.iproute2
             pkgs.iptables-legacy
@@ -106,20 +108,10 @@
             pkgs.docker-buildx
             pkgs.python310
             pkgs.poetry
-            pkgs.iptables-legacy
             # pkgs.gcc
           ];
           pathsToLink = [ "/bin" "/app" "/etc" ];
         };
       };
-      # packages.default = pkgs.mkShell {
-      #   buildInputs = [
-      #     pkgs.docker
-      #     pkgs.docker-compose
-      #     pkgs.docker-buildx
-      #     pkgs.python310
-      #     pkgs.poetry
-      #   ];
-      # };
     };
 }
