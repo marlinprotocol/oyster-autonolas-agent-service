@@ -14,7 +14,13 @@ ip route
 iptables -t nat -N DOCKER
 iptables -t nat -A OUTPUT -d 172.17.0.0/16 -j DOCKER
 iptables -A OUTPUT -t nat -p tcp --dport 1:65535 ! -d 127.0.0.1  -j DNAT --to-destination 127.0.0.1:1200
+iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
 iptables -L -t nat
+
+# Allow outbound HTTP and HTTPS traffic
+iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT
+iptables -A OUTPUT -p tcp --dport 80 -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT
 
 # generate identity key
 /app/keygen-ed25519 --secret /app/id.sec --public /app/id.pub
@@ -37,6 +43,18 @@ DNS_PID=$!
 # Wait for DNS and proxy to be ready
 sleep 10
 
+# Check if DNS proxy is running
+if ! pgrep -f dnsproxy > /dev/null; then
+    echo "DNS proxy failed to start. Exiting."
+    exit 1
+fi
+
+# Check loopback interface
+if ! ifconfig lo | grep "inet 127.0.0.1" > /dev/null; then
+    echo "Loopback interface not configured correctly. Exiting."
+    exit 1
+fi
+
 export HOME=/app
 export POETRY_HOME=/app/.poetry
 export PATH=$POETRY_HOME/bin:$PATH
@@ -46,6 +64,8 @@ cd /app
 poetry config virtualenvs.in-project true
 poetry new olas-agent
 cd olas-agent
+poetry run python --version
+poetry add open-autonomy[all] open-aea-ledger-ethereum
 
 # Add dependencies
 poetry add open-autonomy[all] open-aea-ledger-ethereum
@@ -57,16 +77,29 @@ poetry run autonomy fetch valory/hello_world:0.1.0:bafybeifvk5uvlnmugnefhdxp26p6
 
 cd /app/olas-agent/hello_world
 
-# Set up Docker DNS configuration
-echo "nameserver 8.8.8.8" > /etc/resolv.conf
-echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+# Modify Docker daemon settings
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<EOF
+{
+  "dns": ["172.17.0.1"],
+  "dns-search": [],
+  "dns-opts": ["ndots:1"],
+  "hosts": ["unix:///var/run/docker.sock"]
+}
+EOF
+
+# Create resolv.conf file for Docker
+mkdir -p /run/systemd/resolve
+cat > /run/systemd/resolve/resolv.conf <<EOF
+nameserver 172.17.0.1
+EOF
 
 # Start Docker daemon
-/bin/dockerd &
+dockerd &
 DOCKER_PID=$!
 
 # Wait for Docker to be ready
-sleep 30
+sleep 20
 
 # Check if Docker socket exists
 if [ ! -S /var/run/docker.sock ]; then
@@ -82,11 +115,39 @@ else
     exit 1
 fi
 
-# # Debug: Check DNS resolution after Docker start
-# nslookup registry.autonolas.tech || { echo "DNS resolution failed"; exit 1; }
+# Test Docker DNS resolution
+echo "Testing Docker DNS resolution:"
+docker --rm alpine nslookup registry.autonolas.tech || echo "Docker DNS resolution failed"
 
-# Build the image
-poetry run autonomy build-image
+# Verify iptables rules
+echo "Verifying iptables rules:"
+iptables -L -t nat
+
+# Test DNS resolution again
+echo "Testing DNS resolution:"
+nslookup registry.autonolas.tech || {
+  echo "DNS resolution failed. Exiting."
+  exit 1
+}
+
+# echo "Checking if Docker is listening on the required ports:"
+# netstat -tuln | grep -E '(:2375|:2376|:443)' || echo "Docker is not listening on the required ports"
+
+# # Check network connectivity from within a Docker container
+# echo "Checking network connectivity from within a Docker container"
+#docker run --rm --network host alpine sh -c "wget -T 30 --spider https://registry.autonolas.tech" || {
+#     echo "Docker container cannot reach registry.autonolas.tech using host network mode. Exiting."
+
+# # Check network connectivity from within the enclave
+# echo "Checking network connectivity from within the enclave"
+# wget -T 30 --no-check-certificate --spider https://registry.autonolas.tech || {
+#   echo "Enclave cannot reach registry.autonolas.tech. Exiting."
+#   exit 1
+# }
+
+# poetry run autonomy build-image
+echo "DNS resolution and network connectivity successful. Proceeding with build."
+poetry -vvv run autonomy build-image
 
 cat > keys.json << EOF
 [
