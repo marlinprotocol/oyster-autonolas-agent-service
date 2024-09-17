@@ -78,7 +78,7 @@ cat > /etc/docker/daemon.json <<EOF
 {
   "dns": ["172.17.0.1"],
   "dns-opts": ["ndots:1"],
-  "iptables": false,
+  "iptables": true,
   "ip-forward": true,
   "ip-masq": false,
   "userland-proxy": false,
@@ -87,6 +87,8 @@ cat > /etc/docker/daemon.json <<EOF
 EOF
 
 export DOCKER_HOST=unix:///var/run/docker.sock
+
+# sysctl -w net.ipv4.ip_forward=1
 
 # Start Docker daemon
 /bin/dockerd &
@@ -110,8 +112,9 @@ if [ ! -S /var/run/docker.sock ]; then
 fi
 echo "Docker socket found"
 
-echo "Check docker /etc/resolv.conf"
-docker run --rm alpine cat /etc/resolv.conf
+# Rn this gives: wget: can't connect to remote host (34.160.111.145): Operation timed out
+echo "Below will show the container's routing table, DNS configuration, and attempt to reach an external IP address."
+docker run --rm alpine sh -c "ip route && cat /etc/resolv.conf && wget --no-check-certificate -O- -q https://ifconfig.me"
 
 # Test communication from within a Docker container
 echo "Testing communication from within a Docker container"
@@ -140,142 +143,28 @@ cd /app/olas-agent/hello_world
 echo "Running poetry with proxy settings"
 poetry -vvv run autonomy build-image
 
-# # Test communication from within a Docker container with explicit proxy
-# echo "Testing communication from within a Docker container with explicit proxy"
-# docker run --rm --network host alpine sh -c "export http_proxy=127.0.0.1:1200; wget --no-check-certificate --spider https://registry.autonolas.tech" || {
-#   echo "Docker container cannot reach registry.autonolas.tech using explicit proxy. Exiting."
-# }
+echo "DNS resolution and network connectivity successful. Proceeding with build."
+poetry -vvv run autonomy build-image
 
-# echo "Docker container communication test with explicit proxy passed"
+cat > keys.json << EOF
+[
+  {
+    "address": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+    "private_key": "0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356"
+  }
+]
+EOF
+export ALL_PARTICIPANTS='[
+    "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955"
+]'
 
+poetry run autonomy deploy build keys.json -ltm
 
+# Stop Docker, DNS proxy and transparent proxy
+kill $DOCKER_PID
+kill $DNS_PID
+kill $PROXY_PID
 
-
-# # Check if DNS proxy is running
-# if ! pgrep -f dnsproxy > /dev/null; then
-#     echo "DNS proxy failed to start. Exiting."
-#     exit 1
-# fi
-
-# # Check loopback interface
-# if ! ifconfig lo | grep "inet 127.0.0.1" > /dev/null; then
-#     echo "Loopback interface not configured correctly. Exiting."
-#     exit 1
-# fi
-
-# export HOME=/app
-# export POETRY_HOME=/app/.poetry
-# export PATH=$POETRY_HOME/bin:$PATH
-
-# # todo - check if autonomy pre-requisites are installed
-# cd /app
-# poetry config virtualenvs.in-project true
-# poetry new olas-agent
-# cd olas-agent
-# poetry run python --version
-# poetry add open-autonomy[all] open-aea-ledger-ethereum
-
-# # Add dependencies
-# poetry add open-autonomy[all] open-aea-ledger-ethereum
-
-# # Initialize autonomy
-# poetry run autonomy init --remote --ipfs --author anon_kun
-# poetry run autonomy packages init
-# poetry run autonomy fetch valory/hello_world:0.1.0:bafybeifvk5uvlnmugnefhdxp26p6q2krc5i5ga6hlwgg6xyyn5b6hknmru --service
-
-# cd /app/olas-agent/hello_world
-
-# # Modify Docker daemon settings
-# mkdir -p /etc/docker
-# cat > /etc/docker/daemon.json <<EOF
-# {
-#   "dns": ["172.17.0.1"],
-#   "dns-search": [],
-#   "dns-opts": ["ndots:1"],
-#   "hosts": ["unix:///var/run/docker.sock"]
-# }
-# EOF
-
-# # Create resolv.conf file for Docker
-# mkdir -p /run/systemd/resolve
-# cat > /run/systemd/resolve/resolv.conf <<EOF
-# nameserver 172.17.0.1
-# EOF
-
-# # Start Docker daemon
-# dockerd &
-# DOCKER_PID=$!
-
-# # Wait for Docker to be ready
-# sleep 20
-
-# # Check if Docker socket exists
-# if [ ! -S /var/run/docker.sock ]; then
-#     echo "Docker socket not found. Exiting."
-#     exit 1
-# fi
-
-# # Check if Docker is running
-# if docker info > /dev/null 2>&1; then
-#     echo "Docker is running, proceeding with the build."
-# else
-#     echo "Docker is not running. Exiting."
-#     exit 1
-# fi
-
-# # Test Docker DNS resolution
-# echo "Testing Docker DNS resolution:"
-# docker run --rm --network host alpine nslookup registry.autonolas.tech || echo "Docker DNS resolution failed"
-
-# # Verify iptables rules
-# echo "Verifying iptables rules:"
-# iptables -L -t nat
-
-# # Test DNS resolution again
-# echo "Testing DNS resolution:"
-# nslookup registry.autonolas.tech || {
-#   echo "DNS resolution failed. Exiting."
-#   exit 1
-# }
-
-# # Check network connectivity from within the enclave
-# echo "Checking network connectivity from within the enclave"
-# wget -O- --timeout=30 --no-check-certificate -v https://registry.autonolas.tech || {
-#   echo "Enclave cannot reach registry.autonolas.tech. Exiting."
-# }
-
-# # Check network connectivity from within a Docker container
-# echo "Checking network connectivity from within a Docker container"
-# docker run --rm --network host alpine sh -c "wget -T 30 --no-check-certificate --spider http://google.com" || {
-#   echo "Docker container cannot reach http://google.com using host network mode. Exiting."
-# }
-
-# # Check if Docker is listening on the required ports
-# echo "Checking if Docker is listening on the required ports:"
-# netstat -tuln | grep -E '(::2376|:443)' || echo "Docker is not listening on the required ports"
-
-# echo "DNS resolution and network connectivity successful. Proceeding with build."
-# poetry -vvv run autonomy build-image
-
-# cat > keys.json << EOF
-# [
-#   {
-#     "address": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
-#     "private_key": "0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356"
-#   }
-# ]
-# EOF
-# export ALL_PARTICIPANTS='[
-#     "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955"
-# ]'
-
-# poetry run autonomy deploy build keys.json -ltm
-
-# # Stop Docker, DNS proxy and transparent proxy
-# kill $DOCKER_PID
-# kill $DNS_PID
-# kill $PROXY_PID
-
-# # starting supervisord
-# cat /etc/supervisord.conf
-# /app/supervisord
+# starting supervisord
+cat /etc/supervisord.conf
+/app/supervisord
