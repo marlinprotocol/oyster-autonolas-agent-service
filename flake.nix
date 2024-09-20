@@ -10,7 +10,6 @@
     let system = "x86_64-linux"; 
     nitro = nitro-util.lib.${system};
     eifArch = "x86_64";
-    # pkgs = (import nixpkgs { system = "${system}"; config.allowUnfree = true; }).extend poetry2nix.overlays.default;
     pkgs = import nixpkgs { 
       inherit system; 
       config.allowUnfree = true;
@@ -21,6 +20,7 @@
             python3 = prev.python310;
           };
           python = prev.python310;
+          iptables = prev.iptables-legacy;
         })
       ];
     };
@@ -72,6 +72,21 @@
     setup = ./. + "/setup.sh";
     supervisorConf = ./. + "/supervisord.conf";
     in {
+       nixosConfigurations.default = nixpkgs.lib.nixosSystem {
+        inherit system;
+        modules = [
+          ({ config, pkgs, ... }: {
+            boot.kernel.sysctl = {
+              "net.ipv4.ip_forward" = 1;
+            };
+
+            virtualisation.docker = {
+              enable = true;
+              extraOptions = "--iptables=false";
+            };
+          })
+        ];
+      };
       app = pkgs.runCommand "app" {} ''
       echo Preparing the app folder
       pwd
@@ -92,12 +107,6 @@
       cp ${init} $out
       chmod +x $out
       '';
-      # _very_ hacky, my nix-fu is definitely not great, figure out a better way
-			iptablesPath = pkgs.runCommand "iptablesPath" {} ''
-			mkdir -p $out/app
-			echo "${(pkgs.lib.lists.findFirst (x: pkgs.lib.strings.hasInfix "iptable" x) "/nowhere" (pkgs.lib.strings.splitString ":" pkgs.docker.moby.extraPath))}/" > $out/app/iptablesPath.txt
-			cat $out/app/iptablesPath.txt
-			'';
       packages.${system}.default = nitro.buildEif {
         name = "enclave";
         arch = eifArch;
@@ -115,7 +124,6 @@
           paths = [
             self.app
             pkgs.busybox
-            self.iptablesPath
             pkgs.nettools
             pkgs.iproute2
             pkgs.iptables-legacy
